@@ -1,0 +1,8 @@
+google-genai
+fastapi
+uvicorn
+python-multipart
+pillow
+numpy
+requests
+firebase-admin

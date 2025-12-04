@@ -1,0 +1,7 @@
+Testing Health Check...
+Status: 200
+Response: {'status': 'ok', 'project': 'vital-octagon-19612'}
+
+Testing Generate Image...
+Status: 500
+Error: {"detail":"No image generated"}

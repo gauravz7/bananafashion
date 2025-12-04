@@ -1,0 +1,16 @@
+Testing Health Check...
+Status: 200
+Response: {'status': 'ok', 'project': 'vital-octagon-19612'}
+
+Testing Generate Image...
+Status: 200
+Success! Image received.
+
+Testing Virtual Try-On...
+Downloading sample images...
+Status: 200
+Success! VTON image received.
+
+Testing Video Generation...
+Status: 200
+Success! Video received.
