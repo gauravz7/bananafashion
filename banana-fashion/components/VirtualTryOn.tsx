@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Upload, Wand2, ArrowRight, Check, Shirt, User, Image as ImageIcon, Download, History } from "lucide-react";
+import { Upload, Wand2, ArrowRight, Check, Shirt, User, Image as ImageIcon, Download, History, Video, Settings2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import clsx from "clsx";
 import { ShimmerButton } from "@/components/ShimmerButton";
@@ -13,6 +13,12 @@ const STEPS = [
   { id: 2, name: "Background", icon: ImageIcon },
   { id: 3, name: "Garment", icon: Shirt },
   { id: 4, name: "Try-On", icon: Wand2 },
+  { id: 5, name: "Video", icon: Video },
+];
+
+const MODELS = [
+    { id: "gemini-2.5-flash-image", name: "Gemini 2.5 Flash" },
+    { id: "gemini-3-pro-image-preview", name: "Gemini 3 Pro" },
 ];
 
 export default function VirtualTryOn() {
@@ -23,6 +29,7 @@ export default function VirtualTryOn() {
   const [modelImage, setModelImage] = useState<string | null>(null);
   const [garmentImage, setGarmentImage] = useState<string | null>(null);
   const [resultImage, setResultImage] = useState<string | null>(null);
+  const [videoResult, setVideoResult] = useState<string | null>(null);
   const [activePreview, setActivePreview] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
 
@@ -30,13 +37,24 @@ export default function VirtualTryOn() {
   useEffect(() => { if (modelImage) setActivePreview(modelImage); }, [modelImage]);
   useEffect(() => { if (garmentImage) setActivePreview(garmentImage); }, [garmentImage]);
   useEffect(() => { if (resultImage) setActivePreview(resultImage); }, [resultImage]);
+  useEffect(() => { if (videoResult) setActivePreview(videoResult); }, [videoResult]);
   
   // Step 1: Model Generation/Upload
   const [modelPrompt, setModelPrompt] = useState("A professional studio shot of a fashion model, full body, standing pose, neutral background");
+  const [modelAspectRatio, setModelAspectRatio] = useState("3:4");
+  const [modelGenModel, setModelGenModel] = useState("gemini-2.5-flash-image");
+  const [modelResolution, setModelResolution] = useState("1K");
   
   // Step 2: Background
   const [backgroundPrompt, setBackgroundPrompt] = useState("");
   const [useCustomBackground, setUseCustomBackground] = useState(false);
+  const [backgroundModel, setBackgroundModel] = useState("gemini-2.5-flash-image");
+
+  // Step 5: Video
+  const [videoPrompt, setVideoPrompt] = useState("A fashion model walking on a runway, high fashion, 4k, cinematic lighting");
+  const [videoDuration, setVideoDuration] = useState<4 | 6 | 8>(6);
+  const [videoAspectRatio, setVideoAspectRatio] = useState("16:9");
+  const [videoAudio, setVideoAudio] = useState(true);
 
   // Asset Selection State
   const [showAssetPicker, setShowAssetPicker] = useState<{ type?: AssetType, category?: "image" | "video", tab?: "user-data" | "user-generated-data", onSelect: (url: string) => void } | null>(null);
@@ -101,8 +119,14 @@ export default function VirtualTryOn() {
     try {
       const formData = new FormData();
       formData.append("prompt", modelPrompt);
-      formData.append("aspect_ratio", "3:4"); // Portrait for full body
+      formData.append("aspect_ratio", modelAspectRatio);
+      formData.append("model", modelGenModel);
+      formData.append("resolution", modelResolution);
 
+      if (!user) {
+        signInWithGoogle();
+        return;
+      }
       const headers = await getAuthHeaders();
       // Remove Content-Type header to let browser set it with boundary for FormData
       const { "Content-Type": _, ...authHeaders } = headers as any;
@@ -136,8 +160,12 @@ export default function VirtualTryOn() {
       const formData = new FormData();
       formData.append("image", file);
       formData.append("prompt", backgroundPrompt);
+      formData.append("model", backgroundModel);
 
-      if (!user) throw new Error("User not initialized");
+      if (!user) {
+        signInWithGoogle();
+        return;
+      }
       const token = await user.getIdToken();
       const res = await fetch("http://localhost:8000/edit-image", {
         method: "POST",
@@ -156,9 +184,11 @@ export default function VirtualTryOn() {
         setShowSavePrompt(true);
       } else {
         console.error("Failed to generate background", await res.text());
+        alert("Failed to generate background. Please try again.");
       }
     } catch (error) {
       console.error("Failed to generate background", error);
+      alert("An error occurred while generating the background.");
     } finally {
       setIsProcessing(false);
     }
@@ -177,7 +207,10 @@ export default function VirtualTryOn() {
       formData.append("garment_image", garmentFile);
       formData.append("category", "tops");
 
-      if (!user) throw new Error("User not initialized");
+      if (!user) {
+        signInWithGoogle();
+        return;
+      }
       const token = await user.getIdToken();
       const res = await fetch("http://localhost:8000/try-on", {
         method: "POST",
@@ -204,11 +237,50 @@ export default function VirtualTryOn() {
     }
   };
 
+  const generateVideo = async () => {
+    if (!resultImage) return;
+    setIsProcessing(true);
+    try {
+      const file = await ensureFile(resultImage, "input.png");
+      
+      const formData = new FormData();
+      formData.append("image", file);
+      formData.append("prompt", videoPrompt);
+      formData.append("duration_seconds", videoDuration.toString());
+      formData.append("aspect_ratio", videoAspectRatio);
+      formData.append("generate_audio", videoAudio.toString());
+
+      if (!user) throw new Error("User not initialized");
+      const token = await user.getIdToken();
+      const res = await fetch("http://localhost:8000/generate-video", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`
+        },
+        body: formData
+      });
+
+      if (res.ok) {
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        setVideoResult(url);
+        setActivePreview(url);
+        setShowSavePrompt(true);
+      } else {
+        console.error("Failed to generate video", await res.text());
+      }
+    } catch (error) {
+      console.error("Failed to generate video", error);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   const handleDownload = () => {
-    if (resultImage) {
+    if (activePreview) {
       const link = document.createElement("a");
-      link.href = resultImage;
-      link.download = "virtual-try-on-result.png";
+      link.href = activePreview;
+      link.download = activePreview.includes("blob:") && activePreview === videoResult ? "video.mp4" : "image.png";
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -303,6 +375,69 @@ export default function VirtualTryOn() {
                       onChange={(e) => setModelPrompt(e.target.value)}
                       className="w-full bg-black/20 border border-white/10 rounded-xl p-3 text-sm text-white focus:border-pink-500 outline-none min-h-[100px]"
                     />
+                    
+                    <div className="space-y-2">
+                        <label className="text-sm text-gray-400">Model</label>
+                        <div className="grid grid-cols-2 gap-2">
+                            {MODELS.map((m) => (
+                                <button
+                                    key={m.id}
+                                    onClick={() => setModelGenModel(m.id)}
+                                    className={clsx(
+                                        "py-2 px-3 rounded-lg text-xs font-medium border transition-all text-center",
+                                        modelGenModel === m.id
+                                            ? "bg-pink-500/20 border-pink-500 text-white" 
+                                            : "border-white/10 text-gray-400 hover:bg-white/5"
+                                    )}
+                                >
+                                    {m.name}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    {modelGenModel === "gemini-3-pro-image-preview" && (
+                        <div className="space-y-2">
+                            <label className="text-sm text-gray-400">Resolution</label>
+                            <div className="grid grid-cols-3 gap-2">
+                                {["1K", "2K", "4K"].map((res) => (
+                                    <button
+                                        key={res}
+                                        onClick={() => setModelResolution(res)}
+                                        className={clsx(
+                                            "py-2 px-3 rounded-lg text-xs font-medium border transition-all text-center",
+                                            modelResolution === res
+                                                ? "bg-pink-500/20 border-pink-500 text-white" 
+                                                : "border-white/10 text-gray-400 hover:bg-white/5"
+                                        )}
+                                    >
+                                        {res}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="space-y-2">
+                        <label className="text-sm text-gray-400">Aspect Ratio</label>
+                        <div className="grid grid-cols-5 gap-2">
+                            {["1:1", "3:4", "4:3", "9:16", "16:9"].map((ratio) => (
+                                <button
+                                    key={ratio}
+                                    onClick={() => setModelAspectRatio(ratio)}
+                                    className={clsx(
+                                        "py-2 rounded-lg text-xs font-medium border transition-all",
+                                        modelAspectRatio === ratio 
+                                            ? "bg-pink-500/20 border-pink-500 text-white" 
+                                            : "border-white/10 text-gray-400 hover:bg-white/5"
+                                    )}
+                                >
+                                    {ratio}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
                     <ShimmerButton 
                       onClick={generateModel}
                       disabled={isProcessing}
@@ -358,6 +493,27 @@ export default function VirtualTryOn() {
                         placeholder="A luxury boutique interior with warm lighting..."
                         className="w-full bg-black/20 border border-white/10 rounded-xl p-3 text-sm text-white focus:border-pink-500 outline-none min-h-[100px]"
                       />
+                      
+                      <div className="space-y-2">
+                        <label className="text-sm text-gray-400">Model</label>
+                        <div className="grid grid-cols-2 gap-2">
+                            {MODELS.map((m) => (
+                                <button
+                                    key={m.id}
+                                    onClick={() => setBackgroundModel(m.id)}
+                                    className={clsx(
+                                        "py-2 px-3 rounded-lg text-xs font-medium border transition-all text-center",
+                                        backgroundModel === m.id
+                                            ? "bg-pink-500/20 border-pink-500 text-white" 
+                                            : "border-white/10 text-gray-400 hover:bg-white/5"
+                                    )}
+                                >
+                                    {m.name}
+                                </button>
+                            ))}
+                        </div>
+                      </div>
+
                       <p className="text-xs text-gray-500 mb-4">
                         * This will use generative fill to replace the background while keeping the model.
                       </p>
@@ -438,6 +594,116 @@ export default function VirtualTryOn() {
                 </ShimmerButton>
               </motion.div>
             )}
+
+            {currentStep === 5 && (
+              <motion.div 
+                key="step5"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+                className="space-y-6"
+              >
+                <h3 className="text-lg font-bold text-white">Generate Video</h3>
+                <p className="text-sm text-gray-400">
+                  Bring your try-on result to life with video generation.
+                </p>
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm text-gray-400">Video Prompt</label>
+                    <textarea 
+                        value={videoPrompt}
+                        onChange={(e) => setVideoPrompt(e.target.value)}
+                        className="w-full bg-black/20 border border-white/10 rounded-xl p-3 text-sm text-white focus:border-pink-500 outline-none min-h-[100px]"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                        <label className="text-sm text-gray-400">Duration</label>
+                        <div className="flex gap-2">
+                            {[4, 6, 8].map((d) => (
+                                <button
+                                    key={d}
+                                    onClick={() => setVideoDuration(d as 4 | 6 | 8)}
+                                    className={clsx(
+                                        "flex-1 py-2 rounded-lg text-xs font-medium border transition-all",
+                                        videoDuration === d
+                                            ? "bg-pink-500/20 border-pink-500 text-white" 
+                                            : "border-white/10 text-gray-400 hover:bg-white/5"
+                                    )}
+                                >
+                                    {d}s
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                    
+                    <div className="space-y-2">
+                        <label className="text-sm text-gray-400">Audio</label>
+                        <div className="flex gap-2">
+                            <button
+                                onClick={() => setVideoAudio(true)}
+                                className={clsx(
+                                    "flex-1 py-2 rounded-lg text-xs font-medium border transition-all",
+                                    videoAudio
+                                        ? "bg-pink-500/20 border-pink-500 text-white" 
+                                        : "border-white/10 text-gray-400 hover:bg-white/5"
+                                )}
+                            >
+                                On
+                            </button>
+                            <button
+                                onClick={() => setVideoAudio(false)}
+                                className={clsx(
+                                    "flex-1 py-2 rounded-lg text-xs font-medium border transition-all",
+                                    !videoAudio
+                                        ? "bg-pink-500/20 border-pink-500 text-white" 
+                                        : "border-white/10 text-gray-400 hover:bg-white/5"
+                                )}
+                            >
+                                Off
+                            </button>
+                        </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                        <label className="text-sm text-gray-400">Aspect Ratio</label>
+                        <div className="grid grid-cols-5 gap-2">
+                            {["1:1", "3:4", "4:3", "9:16", "16:9"].map((ratio) => (
+                                <button
+                                    key={ratio}
+                                    onClick={() => setVideoAspectRatio(ratio)}
+                                    className={clsx(
+                                        "py-2 rounded-lg text-xs font-medium border transition-all",
+                                        videoAspectRatio === ratio 
+                                            ? "bg-pink-500/20 border-pink-500 text-white" 
+                                            : "border-white/10 text-gray-400 hover:bg-white/5"
+                                    )}
+                                >
+                                    {ratio}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+
+                <ShimmerButton 
+                  onClick={generateVideo}
+                  disabled={isProcessing}
+                  className="w-full justify-center"
+                >
+                  {isProcessing ? (
+                    <div className="animate-spin rounded-full h-5 w-5 border-2 border-black border-t-transparent" />
+                  ) : (
+                    <>
+                      <Video className="h-5 w-5" />
+                      Generate Video
+                    </>
+                  )}
+                </ShimmerButton>
+              </motion.div>
+            )}
           </AnimatePresence>
         </div>
 
@@ -451,12 +717,13 @@ export default function VirtualTryOn() {
               Back
             </button>
           )}
-          {currentStep < 4 && (
+          {currentStep < 5 && (
             <button 
               onClick={() => setCurrentStep(c => c + 1)}
               disabled={
                 (currentStep === 1 && !modelImage) ||
-                (currentStep === 3 && !garmentImage)
+                (currentStep === 3 && !garmentImage) ||
+                (currentStep === 4 && !resultImage)
               }
               className="flex-1 py-3 rounded-xl bg-white text-black font-bold hover:bg-gray-200 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
@@ -474,23 +741,37 @@ export default function VirtualTryOn() {
         <div className="flex-1 flex items-center justify-center relative z-10 min-h-0">
           {activePreview ? (
             <div className="relative group h-full flex items-center justify-center">
-              <motion.img 
-                key={activePreview}
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                src={activePreview} 
-                alt="Preview" 
-                className="max-h-full max-w-full rounded-xl shadow-2xl object-contain"
-              />
-              {activePreview === resultImage && (
+              {activePreview.endsWith(".mp4") || activePreview.startsWith("blob:") && videoResult === activePreview ? (
+                <video 
+                  key={activePreview}
+                  src={activePreview}
+                  controls
+                  autoPlay
+                  loop
+                  className="max-h-full max-w-full rounded-xl shadow-2xl object-contain"
+                />
+              ) : (
+                <motion.img 
+                  key={activePreview}
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  src={activePreview} 
+                  alt="Preview" 
+                  className="max-h-full max-w-full rounded-xl shadow-2xl object-contain"
+                />
+              )}
+              
+              {(activePreview === resultImage || activePreview === videoResult) && (
                 <div className="absolute bottom-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity flex gap-2">
                   <ShimmerButton 
                     onClick={async () => {
-                      if (resultImage) {
+                      if (activePreview) {
                           try {
-                              const blob = await fetch(resultImage).then(r => r.blob());
-                              const file = new File([blob], "result.png", { type: "image/png" });
-                              await uploadAsset(file, "output-image");
+                              const blob = await fetch(activePreview).then(r => r.blob());
+                              const type = activePreview === videoResult ? "video/mp4" : "image/png";
+                              const ext = activePreview === videoResult ? "mp4" : "png";
+                              const file = new File([blob], `result.${ext}`, { type });
+                              await uploadAsset(file, activePreview === videoResult ? "output-video" : "output-image");
                               alert("Saved to library!");
                           } catch (e) {
                               console.error("Failed to save", e);
@@ -524,7 +805,7 @@ export default function VirtualTryOn() {
         </div>
 
         {/* Transformation Carousel */}
-        {(modelImage || garmentImage || resultImage) && (
+        {(modelImage || garmentImage || resultImage || videoResult) && (
           <div className="mt-6 z-10">
             <div className="flex gap-4 overflow-x-auto pb-2 scrollbar-hide justify-center">
               {modelImage && (
@@ -566,6 +847,20 @@ export default function VirtualTryOn() {
                   <img src={resultImage} alt="Result" className="w-full h-full object-cover" />
                   <div className="absolute bottom-0 inset-x-0 bg-black/60 text-[10px] text-white py-1 text-center font-medium">
                     Result
+                  </div>
+                </button>
+              )}
+              {videoResult && (
+                <button
+                  onClick={() => setActivePreview(videoResult)}
+                  className={clsx(
+                    "relative h-24 aspect-[3/4] rounded-lg overflow-hidden border-2 transition-all flex-shrink-0",
+                    activePreview === videoResult ? "border-pink-500 scale-105" : "border-white/10 hover:border-white/30"
+                  )}
+                >
+                  <video src={videoResult} className="w-full h-full object-cover" />
+                  <div className="absolute bottom-0 inset-x-0 bg-black/60 text-[10px] text-white py-1 text-center font-medium">
+                    Video
                   </div>
                 </button>
               )}
@@ -636,12 +931,16 @@ export default function VirtualTryOn() {
         </div>
       )}
       {/* Save Prompt Modal */}
-      {showSavePrompt && resultImage && (
+      {showSavePrompt && (resultImage || videoResult) && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-8">
           <div className="bg-[#1a1a1a] border border-white/10 rounded-2xl w-full max-w-md flex flex-col p-6 space-y-6">
             <h3 className="text-xl font-bold text-white text-center">Save to Library?</h3>
             <div className="rounded-xl overflow-hidden border border-white/10 aspect-[3/4]">
-              <img src={resultImage} alt="Result" className="w-full h-full object-cover" />
+              {activePreview?.endsWith(".mp4") || activePreview?.startsWith("blob:") && videoResult === activePreview ? (
+                  <video src={activePreview} controls className="w-full h-full object-cover" />
+              ) : (
+                  <img src={activePreview || resultImage || ""} alt="Result" className="w-full h-full object-cover" />
+              )}
             </div>
             <div className="flex gap-4">
               <button 
@@ -653,9 +952,13 @@ export default function VirtualTryOn() {
               <ShimmerButton 
                 onClick={async () => {
                   try {
-                    const blob = await fetch(resultImage).then(r => r.blob());
-                    const file = new File([blob], "result.png", { type: "image/png" });
-                    await uploadAsset(file, "output-image");
+                    const urlToSave = activePreview || resultImage;
+                    if (!urlToSave) return;
+                    
+                    const blob = await fetch(urlToSave).then(r => r.blob());
+                    const isVideo = urlToSave === videoResult;
+                    const file = new File([blob], isVideo ? "result.mp4" : "result.png", { type: isVideo ? "video/mp4" : "image/png" });
+                    await uploadAsset(file, isVideo ? "output-video" : "output-image");
                     alert("Saved to library!");
                     setShowSavePrompt(false);
                   } catch (e) {

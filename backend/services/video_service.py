@@ -11,7 +11,7 @@ class VideoService:
     def __init__(self):
         self.client = genai.Client(vertexai=True, project=PROJECT_ID, location=LOCATION)
 
-    def generate_video(self, prompt: str, image_bytes: bytes = None) -> bytes:
+    def generate_video(self, prompt: str, image_bytes: bytes = None, duration_seconds: int = 6, aspect_ratio: str = "16:9", generate_audio: bool = True) -> bytes:
         # Veo 3.1 supports text-to-video and image-to-video.
         
         image_input = None
@@ -23,12 +23,12 @@ class VideoService:
             prompt=prompt,
             image=image_input,
             config=types.GenerateVideosConfig(
-                aspect_ratio="16:9",
+                aspect_ratio=aspect_ratio,
                 resolution="1080p",
                 number_of_videos=1,
-                duration_seconds=6, # Default to 6s
+                duration_seconds=duration_seconds,
                 person_generation="allow_adult",
-                generate_audio=True,
+                generate_audio=generate_audio,
             ),
         )
         

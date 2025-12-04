@@ -26,72 +26,65 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Check for existing guest ID or create one
-    let guestId = localStorage.getItem("guest_uid");
-    if (!guestId) {
-      guestId = `guest_${Math.random().toString(36).substring(2, 15)}`;
-      localStorage.setItem("guest_uid", guestId);
-    }
-
-    setUser({
-      uid: guestId,
-      email: `${guestId}@guest.com`,
-      displayName: "Guest User",
-      emailVerified: true,
-      isAnonymous: true,
-      metadata: {},
-      providerData: [],
-      refreshToken: "",
-      tenantId: null,
-      delete: async () => {},
-      getIdToken: async () => guestId!, // Return guest ID as token
-      getIdTokenResult: async () => ({} as any),
-      reload: async () => {},
-      toJSON: () => ({}),
-      phoneNumber: null,
-      photoURL: null,
-      providerId: "guest",
-    } as unknown as User);
-    setLoading(false);
-  }, []);
-  
-
-
-  // Disabled real auth for now
-  /*
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
+      if (currentUser) {
+        // Ensure we can get the token
+        try {
+          await currentUser.getIdToken(true);
+        } catch (e) {
+          console.error("Error getting token:", e);
+        }
+      }
       setLoading(false);
     });
 
     return () => unsubscribe();
   }, []);
-  */
 
   const signInWithGoogle = async () => {
-    console.log("Login disabled - using mock user");
+    const provider = new GoogleAuthProvider();
+    try {
+      await signInWithPopup(auth, provider);
+    } catch (error) {
+      console.error("Error signing in with Google", error);
+      throw error;
+    }
   };
 
   const signInWithEmail = async (email: string, pass: string) => {
-    console.log("Login disabled - using mock user");
+    try {
+      await signInWithEmailAndPassword(auth, email, pass);
+    } catch (error) {
+      console.error("Error signing in with email", error);
+      throw error;
+    }
   };
 
   const signUpWithEmail = async (email: string, pass: string) => {
-    console.log("Login disabled - using mock user");
+    try {
+      await createUserWithEmailAndPassword(auth, email, pass);
+    } catch (error) {
+      console.error("Error signing up with email", error);
+      throw error;
+    }
   };
 
   const logout = async () => {
-    console.log("Logout disabled");
+    try {
+      await signOut(auth);
+    } catch (error) {
+      console.error("Error signing out", error);
+      throw error;
+    }
   };
 
   const setGuestId = (id: string) => {
-    localStorage.setItem("guest_uid", id);
-    window.location.reload(); // Reload to ensure all components re-fetch with new ID
+    // Legacy support or maybe just ignore if we are enforcing login
+    console.warn("setGuestId is deprecated in favor of real auth");
   };
 
   return (

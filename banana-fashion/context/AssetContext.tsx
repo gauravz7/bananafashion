@@ -28,7 +28,7 @@ interface AssetContextType {
 const AssetContext = createContext<AssetContextType | undefined>(undefined);
 
 export function AssetProvider({ children }: { children: React.ReactNode }) {
-  const { user } = useAuth();
+  const { user, signInWithGoogle } = useAuth();
   const [assets, setAssets] = useState<Asset[]>([]);
 
   const fetchAssets = useCallback(async () => {
@@ -101,7 +101,10 @@ export function AssetProvider({ children }: { children: React.ReactNode }) {
   };
 
   const uploadAsset = async (file: File, type: AssetType): Promise<string | null> => {
-    if (!user) return null;
+    if (!user) {
+        signInWithGoogle();
+        return null;
+    }
     
     try {
         const token = await user.getIdToken();

@@ -5,6 +5,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from backend.services.gemini_service import GeminiService
 from backend.services.vton_service import VTONService
 from backend.services.video_service import VideoService
+from backend.services.gemini_text_service import GeminiTextService
 from backend.services.local_storage_service import LocalStorageService
 import uvicorn
 import io
@@ -29,6 +30,7 @@ app.add_middleware(
 gemini_service = GeminiService()
 vton_service = VTONService()
 video_service = VideoService()
+gemini_text_service = GeminiTextService()
 # storage_service = LocalStorageService()
 from backend.services.firebase_service import FirebaseService
 storage_service = FirebaseService()
@@ -45,16 +47,40 @@ app.mount("/media", StaticFiles(directory=media_path), name="media")
 
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
     if not credentials:
-        # Fallback for no auth header - maybe return a default or error
-        # For now, let's return the old default if absolutely needed, but frontend should send it.
-        return {"uid": "123", "email": "mock@example.com"}
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid authentication credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     
     token = credentials.credentials
-    # In a real app, we would verify_id_token(token).
-    # Here, we treat the token AS the uid if it starts with "guest_" or is "mock-token"
-    # or just use it as is for simplicity in this dev phase.
-    
-    return {"uid": token, "email": f"{token}@guest.com"}
+    try:
+        # Verify the token using Firebase Admin SDK
+        # We use the storage_service (which is FirebaseService) to verify
+        # or we can call auth.verify_id_token directly if we import it.
+        # Since storage_service has verify_token method, let's use it.
+        decoded_token = storage_service.verify_token(token)
+        
+        if not decoded_token:
+             raise HTTPException(
+                status_code=401,
+                detail="Invalid authentication token",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+            
+        return {
+            "uid": decoded_token["uid"],
+            "email": decoded_token.get("email"),
+            "picture": decoded_token.get("picture"),
+            "name": decoded_token.get("name")
+        }
+    except Exception as e:
+        print(f"Auth error: {e}")
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication failed",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
 @app.get("/")
 def health_check():
@@ -125,10 +151,12 @@ def generate_image(
     background_tasks: BackgroundTasks,
     prompt: str = Form(...),
     aspect_ratio: str = Form("3:4"),
+    model: str = Form("gemini-2.5-flash-image"),
+    resolution: str = Form("1K"),
     user: dict = Depends(get_current_user)
 ):
     try:
-        image_bytes = gemini_service.generate_image(prompt, aspect_ratio)
+        image_bytes = gemini_service.generate_image(prompt, aspect_ratio, model, resolution)
         
         def save_gen_assets(uid, img_bytes, p):
             filename = f"{uid}/{uuid.uuid4()}_gen.png"
@@ -138,7 +166,8 @@ def generate_image(
                 "type": "generated-image",
                 "category": "user-generated-data",
                 "prompt": p,
-                "source": "text-to-image"
+                "source": "text-to-image",
+                "model": model
             })
             
         background_tasks.add_task(save_gen_assets, user['uid'], image_bytes, prompt)
@@ -200,11 +229,12 @@ async def edit_image(
     background_tasks: BackgroundTasks,
     image: UploadFile = File(...),
     prompt: str = Form(...),
+    model: str = Form("gemini-2.5-flash-image"),
     user: dict = Depends(get_current_user)
 ):
     try:
         image_bytes = await image.read()
-        edited_image_bytes = await run_in_threadpool(gemini_service.edit_image, image_bytes, prompt)
+        edited_image_bytes = await run_in_threadpool(gemini_service.edit_image, image_bytes, prompt, image.content_type or "image/png", model)
         
         def save_edit_assets(uid, edited_bytes, p, input_filename):
             # Save Output
@@ -225,11 +255,29 @@ async def edit_image(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+from backend.services.gemini_text_service import GeminiTextService
+
+# ... imports ...
+
+# Initialize services
+gemini_service = GeminiService()
+vton_service = VTONService()
+video_service = VideoService()
+gemini_text_service = GeminiTextService()
+# storage_service = LocalStorageService()
+from backend.services.firebase_service import FirebaseService
+storage_service = FirebaseService()
+
+# ... existing code ...
+
 @app.post("/generate-video")
 async def generate_video(
     background_tasks: BackgroundTasks,
     prompt: str = Form(...),
     image: UploadFile = File(None),
+    duration_seconds: int = Form(6),
+    aspect_ratio: str = Form("16:9"),
+    generate_audio: bool = Form(True),
     user: dict = Depends(get_current_user)
 ):
     try:
@@ -237,7 +285,7 @@ async def generate_video(
         if image:
             image_bytes = await image.read()
 
-        video_bytes = await run_in_threadpool(video_service.generate_video, prompt, image_bytes)
+        video_bytes = await run_in_threadpool(video_service.generate_video, prompt, image_bytes, duration_seconds, aspect_ratio, generate_audio)
         
         def save_video_assets(uid, vid_bytes, p, input_filename):
             v_filename = f"{uid}/{uuid.uuid4()}.mp4"
@@ -254,6 +302,34 @@ async def generate_video(
         background_tasks.add_task(save_video_assets, user['uid'], video_bytes, prompt, image.filename if image else None)
 
         return Response(content=video_bytes, media_type="video/mp4")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/generate-text")
+async def generate_text(
+    prompt: str = Form(...),
+    model: str = Form("gemini-experimental"),
+    temperature: float = Form(1.0),
+    top_p: float = Form(0.95),
+    top_k: int = Form(40),
+    max_output_tokens: int = Form(8192),
+    response_mime_type: str = Form("text/plain"),
+    system_instruction: str = Form(None),
+    user: dict = Depends(get_current_user)
+):
+    try:
+        text = await run_in_threadpool(
+            gemini_text_service.generate_text,
+            prompt=prompt,
+            model=model,
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            max_output_tokens=max_output_tokens,
+            response_mime_type=response_mime_type,
+            system_instruction=system_instruction
+        )
+        return {"text": text}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

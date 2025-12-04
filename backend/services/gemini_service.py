@@ -24,7 +24,7 @@ class GeminiService:
         image.save(buffer, format="PNG")
         return types.Part.from_bytes(data=buffer.getvalue(), mime_type="image/png")
 
-    def generate_image(self, prompt: str, aspect_ratio: str = "1:1") -> bytes:
+    def generate_image(self, prompt: str, aspect_ratio: str = "1:1", model_name: str = "gemini-2.5-flash-image", resolution: str = "1K") -> bytes:
         # Handle aspect ratio by creating a canvas if needed, or just prompt
         # For simplicity, if aspect ratio is standard, we might rely on model or canvas
         # The notebook uses canvas for aspect ratio control.
@@ -37,7 +37,17 @@ class GeminiService:
             "16:9": (1280, 720),
         }
         
-        width, height = aspect_ratios.get(aspect_ratio, (1024, 1024))
+        base_width, base_height = aspect_ratios.get(aspect_ratio, (1024, 1024))
+        
+        scale_factor = 1
+        if resolution == "2K":
+            scale_factor = 2
+        elif resolution == "4K":
+            scale_factor = 4
+            
+        width = base_width * scale_factor
+        height = base_height * scale_factor
+        
         canvas = self.create_blank_canvas(width, height)
         
         contents = [
@@ -45,7 +55,7 @@ class GeminiService:
         ]
         
         response = self.client.models.generate_content(
-            model=MODEL_NAME,
+            model=model_name,
             contents=contents,
             config=self.config,
         )
@@ -57,8 +67,8 @@ class GeminiService:
         
         raise Exception(f"No image generated. Response: {response}")
 
-    def edit_image(self, image_bytes: bytes, prompt: str) -> bytes:
-        source_image = types.Part.from_bytes(data=image_bytes, mime_type="image/png") # Assuming PNG or JPEG, model handles it
+    def edit_image(self, image_bytes: bytes, prompt: str, mime_type: str = "image/png", model_name: str = "gemini-2.5-flash-image") -> bytes:
+        source_image = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
         
         # Enhance prompt for background change if it's not explicit
         # The frontend sends "Describe new background", so we should frame it as an instruction.
@@ -69,7 +79,7 @@ class GeminiService:
         ]
         
         response = self.client.models.generate_content(
-            model=MODEL_NAME,
+            model=model_name,
             contents=contents,
             config=self.config,
         )
