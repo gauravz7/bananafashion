@@ -20,6 +20,7 @@ interface AssetContextType {
   assets: Asset[];
   addAsset: (url: string, type: AssetType) => Promise<void>;
   uploadAsset: (file: File, type: AssetType) => Promise<string | null>;
+  deleteAsset: (assetId: string) => Promise<void>;
   getAssetsByType: (type: AssetType) => Asset[];
   getAssetsByCategory: (category: "image" | "video") => Asset[];
   refreshAssets: () => Promise<void>;
@@ -134,6 +135,31 @@ export function AssetProvider({ children }: { children: React.ReactNode }) {
     return null;
   };
 
+  const deleteAsset = async (assetId: string) => {
+    // Optimistic update
+    setAssets(prev => prev.filter(a => a.id !== assetId));
+
+    if (user) {
+        try {
+            const token = await user.getIdToken();
+            await fetch(`http://localhost:8000/assets/${assetId}`, {
+                method: "DELETE",
+                headers: {
+                    Authorization: `Bearer ${token}`
+                }
+            });
+        } catch (e) {
+            console.error("Failed to delete asset", e);
+            // Revert on failure? For now, we assume success or refresh will fix it.
+            fetchAssets();
+        }
+    } else {
+        // Local storage fallback
+        const updated = assets.filter(a => a.id !== assetId);
+        localStorage.setItem("banana-assets", JSON.stringify(updated));
+    }
+  };
+
   const getAssetsByType = (type: AssetType) => {
     return assets.filter((a) => a.type === type);
   };
@@ -152,7 +178,7 @@ export function AssetProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AssetContext.Provider value={{ assets, addAsset, uploadAsset, getAssetsByType, getAssetsByCategory, refreshAssets: fetchAssets }}>
+    <AssetContext.Provider value={{ assets, addAsset, uploadAsset, deleteAsset, getAssetsByType, getAssetsByCategory, refreshAssets: fetchAssets }}>
       {children}
     </AssetContext.Provider>
   );

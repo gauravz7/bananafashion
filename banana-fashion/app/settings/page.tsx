@@ -1,150 +1,282 @@
 "use client";
 
-import { useSkin, Skin } from "@/context/SkinContext";
+import { useState } from "react";
 import { useAuth } from "@/context/AuthContext";
-import { Check, Moon, Sun, Banana, Cloud, Save, RefreshCw, Copy } from "lucide-react";
+import { ShimmerButton } from "@/components/ShimmerButton";
+import { CheckCircle, XCircle, Loader2, Play, Server, Image as ImageIcon, Shirt, Video, Wand2 } from "lucide-react";
 import clsx from "clsx";
-import { motion } from "framer-motion";
-import { useState, useEffect } from "react";
 
-function GuestIdInput() {
-  const { user, setGuestId } = useAuth();
-  const [inputId, setInputId] = useState("");
-  const [isDirty, setIsDirty] = useState(false);
+type TestStatus = "idle" | "loading" | "success" | "error";
 
-  useEffect(() => {
-    if (user?.uid) {
-      setInputId(user.uid);
-    }
-  }, [user?.uid]);
-
-  const handleSave = () => {
-    if (inputId.trim()) {
-      setGuestId(inputId.trim());
-    }
-  };
-
-  const handleGenerateNew = () => {
-    const newId = `guest_${Math.random().toString(36).substring(2, 15)}`;
-    setGuestId(newId);
-  };
-
-  return (
-    <div className="flex gap-2">
-      <input
-        type="text"
-        value={inputId}
-        onChange={(e) => {
-          setInputId(e.target.value);
-          setIsDirty(e.target.value !== user?.uid);
-        }}
-        className="flex-1 bg-black/20 border border-white/10 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-pink-500/50 transition-colors"
-        placeholder="Enter Guest ID"
-      />
-      {isDirty && (
-        <button
-          onClick={handleSave}
-          className="px-4 py-2 bg-pink-500 hover:bg-pink-600 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition-colors"
-        >
-          <Save className="w-4 h-4" />
-          Save
-        </button>
-      )}
-      <button
-        onClick={handleGenerateNew}
-        className="px-4 py-2 bg-white/5 hover:bg-white/10 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition-colors border border-white/10"
-        title="Generate New ID"
-      >
-        <RefreshCw className="w-4 h-4" />
-        New
-      </button>
-    </div>
-  );
+interface ServiceTest {
+  id: string;
+  name: string;
+  icon: React.ElementType;
+  description: string;
+  testFn: () => Promise<void>;
+  status: TestStatus;
+  message?: string;
 }
 
-const SKINS: { id: Skin; name: string; icon: any; description: string; colors: string }[] = [
-  { 
-    id: "default", 
-    name: "Default Dark", 
-    icon: Moon, 
-    description: "The classic dark mode experience.",
-    colors: "bg-[#0a0a0a] border-white/10"
-  },
-  { 
-    id: "light", 
-    name: "Clean Light", 
-    icon: Sun, 
-    description: "Bright and crisp interface.",
-    colors: "bg-white border-gray-200 text-black"
-  },
-  { 
-    id: "banana", 
-    name: "Banana", 
-    icon: Banana, 
-    description: "Yellow and playful.",
-    colors: "bg-[#1a1a00] border-yellow-500/30 text-yellow-400"
-  },
-  { 
-    id: "midnight", 
-    name: "Midnight", 
-    icon: Cloud, 
-    description: "Deep blue hues.",
-    colors: "bg-[#0f172a] border-slate-700 text-slate-200"
-  }
-];
-
 export default function SettingsPage() {
-  const { skin, setSkin } = useSkin();
+  const { user, signInWithGoogle } = useAuth();
+  const [tests, setTests] = useState<Record<string, { status: TestStatus; message?: string }>>({
+    "generate-image": { status: "idle" },
+    "edit-image": { status: "idle" },
+    "try-on": { status: "idle" },
+    "generate-video": { status: "idle" },
+  });
+
+  const updateTest = (id: string, status: TestStatus, message?: string) => {
+    setTests((prev) => ({ ...prev, [id]: { status, message } }));
+  };
+
+  const getAuthHeaders = async () => {
+    if (!user) {
+      await signInWithGoogle();
+      throw new Error("Please sign in to run tests");
+    }
+    const token = await user.getIdToken();
+    return {
+      "Authorization": `Bearer ${token}`
+    };
+  };
+
+  const createDummyImage = () => {
+    // 1x1 pixel white PNG
+    const base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==";
+    const byteCharacters = atob(base64);
+    const byteNumbers = new Array(byteCharacters.length);
+    for (let i = 0; i < byteCharacters.length; i++) {
+      byteNumbers[i] = byteCharacters.charCodeAt(i);
+    }
+    const byteArray = new Uint8Array(byteNumbers);
+    return new File([byteArray], "dummy.png", { type: "image/png" });
+  };
+
+  const testGenerateImage = async () => {
+    const id = "generate-image";
+    updateTest(id, "loading");
+    try {
+      const headers = await getAuthHeaders();
+      const formData = new FormData();
+      formData.append("prompt", "test");
+      formData.append("aspect_ratio", "1:1");
+      
+      const { "Content-Type": _, ...authHeaders } = headers as any;
+      const res = await fetch("http://localhost:8000/generate-image", {
+        method: "POST",
+        headers: authHeaders,
+        body: formData,
+      });
+
+      if (!res.ok) throw new Error(await res.text());
+      const blob = await res.blob();
+      if (blob.size < 100) throw new Error("Generated image is too small");
+      updateTest(id, "success", "Service operational");
+    } catch (e: any) {
+      updateTest(id, "error", e.message);
+    }
+  };
+
+  const testEditImage = async () => {
+    const id = "edit-image";
+    updateTest(id, "loading");
+    try {
+      const headers = await getAuthHeaders();
+      const formData = new FormData();
+      formData.append("prompt", "test");
+      formData.append("image", createDummyImage());
+      
+      const { "Content-Type": _, ...authHeaders } = headers as any;
+      const res = await fetch("http://localhost:8000/edit-image", {
+        method: "POST",
+        headers: authHeaders,
+        body: formData,
+      });
+
+      if (!res.ok) throw new Error(await res.text());
+      const blob = await res.blob();
+      if (blob.size < 100) throw new Error("Generated image is too small");
+      updateTest(id, "success", "Service operational");
+    } catch (e: any) {
+      updateTest(id, "error", e.message);
+    }
+  };
+
+  const testTryOn = async () => {
+    const id = "try-on";
+    updateTest(id, "loading");
+    try {
+      const headers = await getAuthHeaders();
+      const formData = new FormData();
+      formData.append("person_image", createDummyImage());
+      formData.append("garment_image", createDummyImage());
+      formData.append("category", "tops");
+      
+      const { "Content-Type": _, ...authHeaders } = headers as any;
+      const res = await fetch("http://localhost:8000/try-on", {
+        method: "POST",
+        headers: authHeaders,
+        body: formData,
+      });
+
+      if (!res.ok) throw new Error(await res.text());
+      const blob = await res.blob();
+      if (blob.size < 100) throw new Error("Generated image is too small");
+      updateTest(id, "success", "Service operational");
+    } catch (e: any) {
+      updateTest(id, "error", e.message);
+    }
+  };
+
+  const testGenerateVideo = async () => {
+    const id = "generate-video";
+    updateTest(id, "loading");
+    try {
+      const headers = await getAuthHeaders();
+      const formData = new FormData();
+      formData.append("prompt", "test");
+      formData.append("image", createDummyImage());
+      
+      const { "Content-Type": _, ...authHeaders } = headers as any;
+      const res = await fetch("http://localhost:8000/generate-video", {
+        method: "POST",
+        headers: authHeaders,
+        body: formData,
+      });
+
+      if (!res.ok) throw new Error(await res.text());
+      const blob = await res.blob();
+      if (blob.size < 100) throw new Error("Generated video is too small");
+      updateTest(id, "success", "Service operational");
+    } catch (e: any) {
+      updateTest(id, "error", e.message);
+    }
+  };
+
+  const services: ServiceTest[] = [
+    {
+      id: "generate-image",
+      name: "Image Generation",
+      icon: Wand2,
+      description: "Tests the Gemini 2.5 Flash Image model for text-to-image generation.",
+      testFn: testGenerateImage,
+      status: tests["generate-image"].status,
+      message: tests["generate-image"].message,
+    },
+    {
+      id: "edit-image",
+      name: "Image Editing",
+      icon: ImageIcon,
+      description: "Tests background replacement and generative fill capabilities.",
+      testFn: testEditImage,
+      status: tests["edit-image"].status,
+      message: tests["edit-image"].message,
+    },
+    {
+      id: "try-on",
+      name: "Virtual Try-On",
+      icon: Shirt,
+      description: "Tests the IDM-VTON model for garment transfer.",
+      testFn: testTryOn,
+      status: tests["try-on"].status,
+      message: tests["try-on"].message,
+    },
+    {
+      id: "generate-video",
+      name: "Video Generation",
+      icon: Video,
+      description: "Tests the Kling AI video generation service.",
+      testFn: testGenerateVideo,
+      status: tests["generate-video"].status,
+      message: tests["generate-video"].message,
+    },
+  ];
 
   return (
-    <div className="max-w-4xl mx-auto space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold mb-2">Settings</h1>
-        <p className="text-gray-400">Customize your workspace</p>
-      </div>
+    <div className="min-h-screen bg-black text-white p-8 pl-72">
+      <div className="max-w-4xl mx-auto space-y-8">
+        <div className="space-y-2">
+          <h1 className="text-3xl font-bold flex items-center gap-3">
+            <Server className="w-8 h-8 text-pink-500" />
+            System Status & Settings
+          </h1>
+          <p className="text-gray-400">
+            Verify the operational status of backend AI services.
+          </p>
+        </div>
 
-      <section className="space-y-4">
-        <h2 className="text-lg font-semibold">Appearance</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {SKINS.map((s) => (
-            <button
-              key={s.id}
-              onClick={() => setSkin(s.id)}
-              className={clsx(
-                "relative p-4 rounded-xl border text-left transition-all duration-200 group",
-                s.colors,
-                skin === s.id ? "ring-2 ring-pink-500 ring-offset-2 ring-offset-black" : "hover:scale-[1.02]"
-              )}
+        <div className="grid gap-4">
+          {services.map((service) => (
+            <div 
+              key={service.id}
+              className="glass p-6 rounded-2xl flex items-center justify-between border border-white/10 hover:border-white/20 transition-all"
             >
-              <div className="flex items-start justify-between mb-2">
-                <div className="p-2 rounded-lg bg-white/10">
-                  <s.icon className="w-5 h-5" />
+              <div className="flex items-center gap-4">
+                <div className={clsx(
+                  "w-12 h-12 rounded-xl flex items-center justify-center",
+                  service.status === "success" ? "bg-green-500/20 text-green-500" :
+                  service.status === "error" ? "bg-red-500/20 text-red-500" :
+                  service.status === "loading" ? "bg-blue-500/20 text-blue-500" :
+                  "bg-white/5 text-gray-400"
+                )}>
+                  <service.icon className="w-6 h-6" />
                 </div>
-                {skin === s.id && (
-                  <div className="bg-pink-500 rounded-full p-1">
-                    <Check className="w-3 h-3 text-white" />
-                  </div>
-                )}
+                <div>
+                  <h3 className="font-bold text-lg">{service.name}</h3>
+                  <p className="text-sm text-gray-400">{service.description}</p>
+                  {service.message && (
+                    <p className={clsx(
+                      "text-xs mt-1 font-medium",
+                      service.status === "success" ? "text-green-400" : "text-red-400"
+                    )}>
+                      {service.message}
+                    </p>
+                  )}
+                </div>
               </div>
-              <h3 className="font-bold mb-1">{s.name}</h3>
-              <p className="text-sm opacity-70">{s.description}</p>
-            </button>
+
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <div className={clsx(
+                    "w-3 h-3 rounded-full shadow-[0_0_10px_currentColor] transition-all duration-500",
+                    service.status === "success" ? "bg-green-500 text-green-500" :
+                    service.status === "error" ? "bg-red-500 text-red-500" :
+                    service.status === "loading" ? "bg-yellow-500 text-yellow-500 animate-pulse" :
+                    "bg-gray-600 text-gray-600"
+                  )} />
+                  <span className={clsx(
+                    "text-xs font-bold uppercase tracking-wider",
+                    service.status === "success" ? "text-green-500" :
+                    service.status === "error" ? "text-red-500" :
+                    service.status === "loading" ? "text-yellow-500" :
+                    "text-gray-600"
+                  )}>
+                    {service.status === "idle" ? "READY" : service.status}
+                  </span>
+                </div>
+
+                <ShimmerButton
+                  onClick={service.testFn}
+                  disabled={service.status === "loading"}
+                  className="px-6 py-2 text-sm min-w-[120px] flex justify-center"
+                  background={service.status === "loading" ? "rgba(0,0,0,0.5)" : undefined}
+                >
+                  {service.status === "loading" ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <>
+                      <Play className="w-4 h-4 mr-2" />
+                      Test
+                    </>
+                  )}
+                </ShimmerButton>
+              </div>
+            </div>
           ))}
         </div>
-      </section>
-
-      <section className="space-y-4">
-        <h2 className="text-lg font-semibold">Account</h2>
-        <div className="p-6 rounded-xl border border-white/10 bg-white/5 space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-400 mb-1">Guest ID</label>
-            <p className="text-xs text-gray-500 mb-3">
-              This ID is used to save your history and assets. You can restore a previous session by entering its ID.
-            </p>
-            <GuestIdInput />
-          </div>
-        </div>
-      </section>
+      </div>
     </div>
   );
 }

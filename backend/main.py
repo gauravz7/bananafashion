@@ -115,6 +115,13 @@ def update_asset(asset_id: str, updates: AssetUpdate, user: dict = Depends(get_c
     storage_service.update_asset(user['uid'], asset_id, updates.dict())
     return {"status": "success"}
 
+@app.delete("/assets/{asset_id}")
+def delete_asset(asset_id: str, user: dict = Depends(get_current_user)):
+    success = storage_service.delete_asset(user['uid'], asset_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    return {"status": "success"}
+
 @app.post("/assets/upload")
 async def upload_asset(
     file: UploadFile = File(...),

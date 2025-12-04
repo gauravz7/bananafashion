@@ -2,12 +2,12 @@
 
 import { useAssets } from "@/context/AssetContext";
 import { formatDistanceToNow } from "date-fns";
-import { Download, ExternalLink, Image as ImageIcon, Video, Wand2, Shirt, User, History } from "lucide-react";
+import { Download, ExternalLink, Image as ImageIcon, Video, Wand2, Shirt, User, History, Trash2 } from "lucide-react";
 import { motion } from "framer-motion";
 import clsx from "clsx";
 
 export default function AssetsPage() {
-  const { assets } = useAssets();
+  const { assets, deleteAsset } = useAssets();
 
   const getIconForType = (type: string) => {
     if (type.includes("video")) return <Video className="w-3 h-3" />;
@@ -82,6 +82,18 @@ export default function AssetsPage() {
                 >
                   <Download className="w-4 h-4" />
                 </a>
+                <button
+                  onClick={(e) => {
+                    e.preventDefault();
+                    if (confirm("Are you sure you want to delete this asset?")) {
+                      deleteAsset(asset.id);
+                    }
+                  }}
+                  className="p-2 rounded-full bg-red-500/20 hover:bg-red-500/40 text-red-400 transition-colors backdrop-blur-sm"
+                  title="Delete"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
               </div>
               
               <div className="space-y-2">

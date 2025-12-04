@@ -96,4 +96,16 @@ class LocalStorageService:
             
         # Sort by createdAt desc
         assets.sort(key=lambda x: x.get('createdAt', 0), reverse=True)
-        return assets
+    def delete_asset(self, user_id, asset_id):
+        """Deletes an asset record."""
+        file_path = self._get_user_file(user_id, "assets")
+        assets = self._read_json(file_path)
+        
+        # Filter out the asset
+        new_assets = [a for a in assets if str(a.get('id')) != str(asset_id)]
+        
+        if len(new_assets) == len(assets):
+            return False # Not found
+            
+        self._write_json(file_path, new_assets)
+        return True

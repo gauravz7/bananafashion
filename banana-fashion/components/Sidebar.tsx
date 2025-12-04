@@ -9,7 +9,7 @@ import { motion } from "framer-motion";
 const navItems = [
   { name: "Home", href: "/", icon: Home },
   { name: "Studio", href: "/studio", icon: Camera },
-  { name: "Assets", href: "/studio/assets", icon: ImageIcon },
+  { name: "Assets", href: "/assets", icon: ImageIcon },
 
   { name: "Settings", href: "/settings", icon: Settings },
   // Tools Section
