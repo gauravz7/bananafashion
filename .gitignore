@@ -1,6 +1,9 @@
 # User requested exclusions
 research/
 snapshot/
+snapshots/
+capture_fashn.py
+manual.md
 media/
 data/
 .env
