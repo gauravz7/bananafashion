@@ -1,64 +1,100 @@
 import os
-from google import genai
-from google.genai import types
-from google.genai.types import (
-    RecontextImageConfig,
-    RecontextImageSource,
-    ProductImage,
-    Image
-)
+import json
+import requests
+import google.auth
+from google.auth.transport.requests import Request
+from google.oauth2 import service_account
 
 PROJECT_ID = "vital-octagon-19612"
-LOCATION = "global"
+LOCATION = "us-central1" # VTON is usually in us-central1
 MODEL_NAME = "virtual-try-on-preview-08-04"
 
 class VTONService:
     def __init__(self):
-        self.client = genai.Client(vertexai=True, project=PROJECT_ID, location=LOCATION)
+        self.credentials, self.project = google.auth.default(
+            scopes=["https://www.googleapis.com/auth/cloud-platform"]
+        )
+        self.auth_req = Request()
 
     def try_on(self, person_image_bytes: bytes, garment_image_bytes: bytes, category: str = "tops") -> bytes:
-        # category isn't explicitly used in the recontext_image call in the notebook, 
-        # but usually VTON models might need it. The notebook example just passes images.
-        # We will just pass the images as per the notebook "Recipe 8" and "Virtual Try-On" notebook.
+        print(f"VTON try_on called with person_image_bytes: {len(person_image_bytes)} bytes, garment_image_bytes: {len(garment_image_bytes)} bytes")
         
-        # Note: The notebook uses `Image.from_file` or `Image(gcs_uri=...)`.
-        # We need to see if `Image` supports bytes directly or if we need to upload/save temp.
-        # Looking at the SDK types, `types.Image` usually has `image_bytes` or similar.
-        # Let's check the notebook import: `from google.genai.types import Image`.
-        # If `Image` is a Pydantic model, it might accept bytes.
-        # However, `types.Part.from_bytes` is used for Gemini.
-        # For VTON, the notebook uses `Image.from_file`.
-        # Let's try to use `types.Image(image_bytes=...)` if available, or save to temp.
-        # To be safe and robust, I will save to temp files if I can't find a bytes method, 
-        # but `types.Image` likely supports bytes.
+        # Refresh credentials if needed
+        self.credentials.refresh(self.auth_req)
+        token = self.credentials.token
+
+        url = f"https://{LOCATION}-aiplatform.googleapis.com/v1/projects/{PROJECT_ID}/locations/{LOCATION}/publishers/google/models/{MODEL_NAME}:predict"
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json; charset=utf-8",
+        }
+
+        # Construct the payload
+        # Based on standard Vertex AI VTON payload structure
+        import base64
+        person_b64 = base64.b64encode(person_image_bytes).decode("utf-8")
+        garment_b64 = base64.b64encode(garment_image_bytes).decode("utf-8")
+
+        payload = {
+            "instances": [
+                {
+                    "personImage": {
+                        "image": {
+                            "bytesBase64Encoded": person_b64
+                        }
+                    },
+                    "productImages": [
+                        {
+                            "image": {
+                                "bytesBase64Encoded": garment_b64
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+
+        response = requests.post(url, headers=headers, json=payload)
         
-        # Actually, looking at `google.genai.types.Image`, it often wraps raw bytes.
-        # Let's try `types.Image(image_bytes=person_image_bytes)`.
+        if response.status_code != 200:
+            raise Exception(f"VTON API failed with status {response.status_code}: {response.text}")
+
+        response_json = response.json()
         
-        # Wait, the notebook uses `Image.from_file`.
-        # Let's assume we can pass bytes.
+        # Parse response
+        # Expected response structure:
+        # {
+        #   "predictions": [
+        #     "bytesBase64EncodedString..." 
+        #   ]
+        # }
+        # OR
+        # {
+        #   "predictions": [
+        #     {
+        #       "bytesBase64Encoded": "..."
+        #     }
+        #   ]
+        # }
         
-        person_img = types.Image(image_bytes=person_image_bytes, mime_type="image/jpeg")
-        garment_img = types.Image(image_bytes=garment_image_bytes, mime_type="image/jpeg")
+        predictions = response_json.get("predictions")
+        if not predictions:
+             raise Exception(f"No predictions in response: {response.text}")
+
+        # Vertex AI VTON usually returns the image bytes directly or in a struct
+        prediction = predictions[0]
         
-        response = self.client.models.recontext_image(
-            model=MODEL_NAME,
-            source=RecontextImageSource(
-                person_image=person_img,
-                product_images=[
-                    ProductImage(product_image=garment_img)
-                ],
-            ),
-            config=RecontextImageConfig(
-                output_mime_type="image/jpeg",
-                number_of_images=1,
-                safety_filter_level="BLOCK_LOW_AND_ABOVE",
-            ),
-        )
+        if isinstance(prediction, str):
+            return base64.b64decode(prediction)
+        elif isinstance(prediction, dict) and "bytesBase64Encoded" in prediction:
+            return base64.b64decode(prediction["bytesBase64Encoded"])
+        elif isinstance(prediction, dict) and "image" in prediction:
+             # Some models return { "image": { "bytesBase64Encoded": "..." } }
+             image_data = prediction["image"]
+             if isinstance(image_data, dict) and "bytesBase64Encoded" in image_data:
+                 return base64.b64decode(image_data["bytesBase64Encoded"])
         
-        if response.generated_images and response.generated_images[0].image:
-             # The response image is likely a `types.Image` object.
-             # We need to get bytes from it.
-             return response.generated_images[0].image.image_bytes
-             
-        raise Exception("No VTON image generated")
+        # Fallback debug
+        raise Exception(f"Unexpected prediction format: {prediction}")
+
